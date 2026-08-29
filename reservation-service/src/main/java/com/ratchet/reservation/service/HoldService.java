@@ -22,10 +22,12 @@ public class HoldService {
 
     private final ResourceRepository resourceRepository;
     private final HoldRepository holdRepository;
+    private final org.springframework.data.redis.core.StringRedisTemplate redisTemplate;
 
-    public HoldService(ResourceRepository resourceRepository, HoldRepository holdRepository) {
+    public HoldService(ResourceRepository resourceRepository, HoldRepository holdRepository, org.springframework.data.redis.core.StringRedisTemplate redisTemplate) {
         this.resourceRepository = resourceRepository;
         this.holdRepository = holdRepository;
+        this.redisTemplate = redisTemplate;
     }
 
     @Transactional
@@ -50,6 +52,12 @@ public class HoldService {
         hold.setCreatedAt(now);
         hold.setExpiresAt(now.plus(ttl));
         holdRepository.save(hold);
+
+        try {
+            redisTemplate.opsForValue().set("hold:" + hold.getId(), resourceId.toString(), ttl);
+        } catch (Exception e) {
+            org.slf4j.LoggerFactory.getLogger(HoldService.class).warn("Failed to write hold to Redis, relying on sweep scheduler", e);
+        }
 
         return hold.getId();
     }
