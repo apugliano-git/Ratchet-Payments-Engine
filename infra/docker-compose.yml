@@ -1,0 +1,37 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: ratchet-postgres
+    # TODO: mover a variables de entorno / secrets antes de cualquier despliegue real, estas credenciales son solo para desarrollo local
+    environment:
+      POSTGRES_USER: ratchet
+      POSTGRES_PASSWORD: ratchet_password
+      POSTGRES_DB: ratchet_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - ratchet-network
+    restart: unless-stopped
+
+  redis:
+    image: redis:7
+    container_name: ratchet-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - ratchet-network
+    restart: unless-stopped
+
+networks:
+  ratchet-network:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  redis-data:
