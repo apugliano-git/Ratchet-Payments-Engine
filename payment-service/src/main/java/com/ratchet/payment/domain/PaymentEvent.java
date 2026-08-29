@@ -27,6 +27,9 @@ public class PaymentEvent {
     @Column(nullable = false)
     private Instant receivedAt;
 
+    @Version
+    private Long version;
+
     protected PaymentEvent() {}
 
     public PaymentEvent(String externalEventId, UUID holdId, PaymentEventStatus status, String rawPayload) {

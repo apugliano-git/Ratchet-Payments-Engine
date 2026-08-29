@@ -15,6 +15,11 @@ public class SecurityConfig {
         http
             .authorizeHttpRequests(authorize -> authorize
                 .requestMatchers("/health").permitAll()
+                // SEGURIDAD - DEUDA TÉCNICA v1: este endpoint no tiene autenticación de servicio-a-servicio. 
+                // Solo protegido por no estar expuesto fuera de la red interna de Docker. Antes de cualquier 
+                // despliegue real, agregar autenticación mutua (mTLS) o un token de servicio compartido entre 
+                // payment-service y reservation-service.
+                .requestMatchers("/internal/**").permitAll()
                 .anyRequest().authenticated()
             )
             .oauth2ResourceServer(oauth2 -> oauth2.jwt(jwt -> {}));
