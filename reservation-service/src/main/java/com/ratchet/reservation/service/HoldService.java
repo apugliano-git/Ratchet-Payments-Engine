@@ -17,17 +17,25 @@ import java.util.UUID;
 import org.springframework.retry.annotation.Backoff;
 import org.springframework.retry.annotation.Retryable;
 
+import com.ratchet.reservation.domain.OutboxEvent;
+import com.ratchet.reservation.repository.OutboxRepository;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
 @Service
 public class HoldService {
 
     private final ResourceRepository resourceRepository;
     private final HoldRepository holdRepository;
     private final org.springframework.data.redis.core.StringRedisTemplate redisTemplate;
+    private final OutboxRepository outboxRepository;
+    private final ObjectMapper objectMapper;
 
-    public HoldService(ResourceRepository resourceRepository, HoldRepository holdRepository, org.springframework.data.redis.core.StringRedisTemplate redisTemplate) {
+    public HoldService(ResourceRepository resourceRepository, HoldRepository holdRepository, org.springframework.data.redis.core.StringRedisTemplate redisTemplate, OutboxRepository outboxRepository, ObjectMapper objectMapper) {
         this.resourceRepository = resourceRepository;
         this.holdRepository = holdRepository;
         this.redisTemplate = redisTemplate;
+        this.outboxRepository = outboxRepository;
+        this.objectMapper = objectMapper;
     }
 
     @Transactional
@@ -85,8 +93,31 @@ public class HoldService {
             throw new InvalidHoldStateException("Cannot confirm hold in state: " + hold.getStatus());
         }
         
+        OutboxEvent outboxEvent = new OutboxEvent();
+        outboxEvent.setId(UUID.randomUUID());
+        outboxEvent.setAggregateType("Hold");
+        outboxEvent.setAggregateId(holdId);
+        outboxEvent.setEventType("HoldConfirmed");
+        
+        java.util.Map<String, Object> payloadMap = new java.util.HashMap<>();
+        payloadMap.put("holdId", hold.getId());
+        payloadMap.put("resourceId", hold.getResourceId());
+        payloadMap.put("holderRef", hold.getHolderRef());
+        payloadMap.put("confirmedAt", Instant.now().toString());
+        
+        try {
+            outboxEvent.setPayload(objectMapper.writeValueAsString(payloadMap));
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            throw new RuntimeException("Failed to serialize HoldConfirmed event payload", e);
+        }
+        
+        outboxEvent.setCreatedAt(Instant.now());
+        outboxEvent.setProcessedAt(null);
+        
         hold.setStatus(HoldStatus.CONFIRMED);
         holdRepository.save(hold);
+        
+        outboxRepository.save(outboxEvent);
     }
 
     @Transactional

@@ -55,10 +55,13 @@ class HoldServiceTest {
     @Autowired
     private HoldRepository holdRepository;
 
+    @org.springframework.boot.test.mock.mockito.SpyBean
+    private com.fasterxml.jackson.databind.ObjectMapper objectMapper;
+
     private UUID resourceId;
 
     @BeforeEach
-    void setUp() {
+    void setUp() throws Exception {
         holdRepository.deleteAll();
         resourceRepository.deleteAll();
         Resource resource = new Resource();
@@ -138,5 +141,20 @@ class HoldServiceTest {
                 
         Resource resource = resourceRepository.findById(resourceId).orElseThrow();
         assertThat(resource.getAvailableUnits()).isEqualTo(9); // Unchanged
+    }
+
+    @Test
+    void shouldNotConfirmHoldIfSerializationFails() throws Exception {
+        UUID holdId = holdService.hold(resourceId, "ref-123", Duration.ofMinutes(15));
+        
+        org.mockito.Mockito.doThrow(new com.fasterxml.jackson.core.JsonProcessingException("Simulated error") {})
+            .when(objectMapper).writeValueAsString(org.mockito.Mockito.any());
+            
+        assertThatThrownBy(() -> holdService.confirm(holdId))
+            .isInstanceOf(RuntimeException.class)
+            .hasMessageContaining("Failed to serialize HoldConfirmed event payload");
+            
+        Hold hold = holdRepository.findById(holdId).orElseThrow();
+        assertThat(hold.getStatus()).isEqualTo(HoldStatus.ACTIVE); // Did NOT change to CONFIRMED
     }
 }
