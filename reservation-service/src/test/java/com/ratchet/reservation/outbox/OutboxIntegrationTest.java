@@ -113,6 +113,7 @@ public class OutboxIntegrationTest {
         assertThat(event.getProcessedAt()).isNull();
         assertThat(event.getPayload()).contains(holdId.toString());
         assertThat(event.getPayload()).contains("user-123");
+        assertThat(event.getPayload()).contains("eventId");
 
         // Set up Kafka consumer
         Map<String, Object> consumerProps = KafkaTestUtils.consumerProps("testGroup", "true", embeddedKafkaBroker);

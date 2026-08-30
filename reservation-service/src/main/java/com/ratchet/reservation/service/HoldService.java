@@ -100,6 +100,7 @@ public class HoldService {
         outboxEvent.setEventType("HoldConfirmed");
         
         java.util.Map<String, Object> payloadMap = new java.util.HashMap<>();
+        payloadMap.put("eventId", outboxEvent.getId());
         payloadMap.put("holdId", hold.getId());
         payloadMap.put("resourceId", hold.getResourceId());
         payloadMap.put("holderRef", hold.getHolderRef());

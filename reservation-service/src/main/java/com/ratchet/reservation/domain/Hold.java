@@ -23,6 +23,9 @@ public class Hold {
     
     private Instant expiresAt;
 
+    @jakarta.persistence.Version
+    private Long version;
+
     public Hold() {
     }
 
@@ -72,5 +75,13 @@ public class Hold {
 
     public void setExpiresAt(Instant expiresAt) {
         this.expiresAt = expiresAt;
+    }
+
+    public Long getVersion() {
+        return version;
+    }
+
+    public void setVersion(Long version) {
+        this.version = version;
     }
 }
