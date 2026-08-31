@@ -170,3 +170,14 @@ mvn clean install -DskipTests
 
 **Contexto adicional:** Este conflicto aplica específicamente a `reservation-service/OutboxIntegrationTest` porque es el único test de la suite que usa `@EmbeddedKafka` (en lugar de Testcontainers). Los tests de `payment-service` y `notification-service` usan Testcontainers con puertos aleatorios y **no tienen este problema** — pueden correr con la infra levantada sin inconvenientes.
 
+
+## 7. DEUDA TÉCNICA DE SEGURIDAD Y ENDPOINTS INTERNOS
+
+**Riesgo Conocido:** Los endpoints bajo el path `/internal/**` carecen de autenticación de servicio-a-servicio (mTLS o tokens JWT compartidos). Actualmente confían exclusivamente en el aislamiento de la red interna de Docker.
+
+**Endpoints afectados:**
+1. `POST /internal/holds/{holdId}/confirm` en `reservation-service`: Expuesto para que `payment-service` consolide reservas.
+2. `POST /internal/resources` en `reservation-service` (`InternalResourceController`): **Herramienta de testing** expuesta para inyectar inventario inicial (`availableUnits` arbitrario) durante los tests de carga con k6. 
+
+**Mitigación requerida para producción:**
+Cualquier despliegue fuera del entorno local seguro debe proteger estas rutas mediante autenticación mutua (mTLS), bloquear el acceso público en el Ingress/API Gateway de forma explícita, o bien requerir un JWT de servicio autorizado. La herramienta de testing (`InternalResourceController`) debe eliminarse o inhabilitarse condicionalmente en perfiles productivos.

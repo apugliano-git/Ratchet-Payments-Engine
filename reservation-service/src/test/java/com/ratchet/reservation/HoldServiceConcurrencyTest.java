@@ -27,7 +27,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 @SpringBootTest
 @Testcontainers
-class ResourceServiceConcurrencyTest {
+class HoldServiceConcurrencyTest {
 
 
     @Container
