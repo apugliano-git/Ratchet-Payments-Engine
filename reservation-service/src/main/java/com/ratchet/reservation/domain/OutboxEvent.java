@@ -20,6 +20,8 @@ public class OutboxEvent {
     @Column(nullable = false)
     private UUID aggregateId;
 
+    private UUID resourceId;
+
     @Column(nullable = false)
     private String eventType;
 
@@ -56,6 +58,14 @@ public class OutboxEvent {
 
     public void setAggregateId(UUID aggregateId) {
         this.aggregateId = aggregateId;
+    }
+
+    public UUID getResourceId() {
+        return resourceId;
+    }
+
+    public void setResourceId(UUID resourceId) {
+        this.resourceId = resourceId;
     }
 
     public String getEventType() {

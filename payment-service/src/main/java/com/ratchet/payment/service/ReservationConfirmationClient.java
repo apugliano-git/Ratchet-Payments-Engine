@@ -23,7 +23,7 @@ public class ReservationConfirmationClient {
 
     public ReservationConfirmationClient(
             RestTemplateBuilder restTemplateBuilder,
-            @Value("${reservation.service.url:http://reservation-service:8081}") String reservationServiceUrl) {
+            @Value("${reservation.service.url:http://localhost:8082}") String reservationServiceUrl) {
         
         this.restTemplate = restTemplateBuilder
                 .setConnectTimeout(Duration.ofSeconds(5))

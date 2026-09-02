@@ -4,6 +4,7 @@ import com.ratchet.reservation.domain.Hold;
 import com.ratchet.reservation.domain.HoldStatus;
 import com.ratchet.reservation.domain.Resource;
 import com.ratchet.reservation.repository.HoldRepository;
+import com.ratchet.reservation.repository.OutboxRepository;
 import com.ratchet.reservation.repository.ResourceRepository;
 import com.ratchet.reservation.service.HoldService;
 import com.ratchet.reservation.service.HoldSweepScheduler;
@@ -61,6 +62,9 @@ class HoldExpirationTest {
     private ResourceRepository resourceRepository;
 
     @Autowired
+    private OutboxRepository outboxRepository;
+
+    @Autowired
     private HoldSweepScheduler sweepScheduler;
 
     private UUID resourceId;
@@ -68,6 +72,7 @@ class HoldExpirationTest {
     @BeforeEach
     void setUp() {
         holdRepository.deleteAll();
+        outboxRepository.deleteAll();
         resourceRepository.deleteAll();
 
         Resource resource = new Resource();
@@ -80,6 +85,7 @@ class HoldExpirationTest {
     @AfterEach
     void tearDown() {
         holdRepository.deleteAll();
+        outboxRepository.deleteAll();
         resourceRepository.deleteAll();
     }
 
@@ -100,6 +106,8 @@ class HoldExpirationTest {
         // Verify resource units are restored
         Resource resource = resourceRepository.findById(resourceId).orElseThrow();
         assertThat(resource.getAvailableUnits()).isEqualTo(5);
+        assertThat(outboxRepository.findAll()).extracting(com.ratchet.reservation.domain.OutboxEvent::getEventType)
+                .containsExactlyInAnyOrder("RESERVATION_HOLD_CREATED", "RESERVATION_EXPIRED");
     }
 
     @Test
@@ -178,9 +186,13 @@ class HoldExpirationTest {
         // It must NOT be 6.
         Resource resource = resourceRepository.findById(resourceId).orElseThrow();
         assertThat(resource.getAvailableUnits()).isEqualTo(5);
+        assertThat(outboxRepository.findAll()).extracting(com.ratchet.reservation.domain.OutboxEvent::getEventType)
+                .containsExactlyInAnyOrder("RESERVATION_HOLD_CREATED", "RESERVATION_EXPIRED");
         
         // One should succeed, one should fail
         assertThat(successCount.get()).isEqualTo(1);
         assertThat(optimisticLockExceptions.get() + invalidStateExceptions.get()).isEqualTo(1);
+        assertThat(outboxRepository.findAll()).extracting(com.ratchet.reservation.domain.OutboxEvent::getEventType)
+                .containsExactlyInAnyOrder("RESERVATION_HOLD_CREATED", "RESERVATION_EXPIRED");
     }
 }

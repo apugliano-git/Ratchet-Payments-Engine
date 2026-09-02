@@ -1,5 +1,6 @@
 package com.ratchet.reservation.outbox;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ratchet.reservation.domain.Hold;
 import com.ratchet.reservation.domain.HoldStatus;
 import com.ratchet.reservation.domain.OutboxEvent;
@@ -31,6 +32,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -39,7 +41,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 @SpringBootTest
 @Testcontainers
-@EmbeddedKafka(partitions = 1, brokerProperties = { "listeners=PLAINTEXT://localhost:9092", "port=9092" }, topics = {"reservation.hold.confirmed"})
+@EmbeddedKafka(partitions = 1, brokerProperties = { "listeners=PLAINTEXT://localhost:9092", "port=9092" }, topics = {"reservation.events.v1"})
 public class OutboxIntegrationTest {
 
     @Container
@@ -69,6 +71,9 @@ public class OutboxIntegrationTest {
     private ResourceRepository resourceRepository;
 
     @Autowired
+    private HoldRepository holdRepository;
+
+    @Autowired
     private OutboxRepository outboxRepository;
 
     @Autowired
@@ -77,11 +82,15 @@ public class OutboxIntegrationTest {
     @Autowired
     private EmbeddedKafkaBroker embeddedKafkaBroker;
 
+    @Autowired
+    private ObjectMapper objectMapper;
+
     private UUID resourceId;
 
     @BeforeEach
     void setUp() {
         outboxRepository.deleteAll();
+        holdRepository.deleteAll();
         resourceRepository.deleteAll();
 
         Resource resource = new Resource();
@@ -94,6 +103,7 @@ public class OutboxIntegrationTest {
     @AfterEach
     void tearDown() {
         outboxRepository.deleteAll();
+        holdRepository.deleteAll();
         resourceRepository.deleteAll();
     }
 
@@ -105,11 +115,14 @@ public class OutboxIntegrationTest {
 
         // Verify OutboxEvent is created
         List<OutboxEvent> events = outboxRepository.findByProcessedAtIsNull();
-        assertThat(events).hasSize(1);
-        OutboxEvent event = events.get(0);
+        assertThat(events).hasSize(2);
+        OutboxEvent event = events.stream()
+                .filter(candidate -> candidate.getEventType().equals("RESERVATION_CONFIRMED"))
+                .findFirst().orElseThrow();
         assertThat(event.getAggregateType()).isEqualTo("Hold");
         assertThat(event.getAggregateId()).isEqualTo(holdId);
-        assertThat(event.getEventType()).isEqualTo("HoldConfirmed");
+        assertThat(event.getResourceId()).isEqualTo(resourceId);
+        assertThat(event.getEventType()).isEqualTo("RESERVATION_CONFIRMED");
         assertThat(event.getProcessedAt()).isNull();
         assertThat(event.getPayload()).contains(holdId.toString());
         assertThat(event.getPayload()).contains("user-123");
@@ -130,8 +143,9 @@ public class OutboxIntegrationTest {
         assertThat(records.count()).isGreaterThanOrEqualTo(1);
         boolean found = false;
         for (ConsumerRecord<String, String> record : records) {
-            if (record.key().equals(holdId.toString())) {
+            if (record.key().equals(resourceId.toString()) && record.value().contains("RESERVATION_CONFIRMED")) {
                 assertThat(record.value()).contains("user-123");
+                assertThat(record.value()).contains("\"eventVersion\":1");
                 found = true;
                 break;
             }
@@ -143,5 +157,39 @@ public class OutboxIntegrationTest {
         // Verify OutboxEvent is updated
         OutboxEvent updatedEvent = outboxRepository.findById(event.getId()).orElseThrow();
         assertThat(updatedEvent.getProcessedAt()).isNotNull();
+    }
+
+    @Test
+    void testPublisherUsesDeterministicOutboxOrder() throws Exception {
+        UUID first = holdService.hold(resourceId, "first", Duration.ofMinutes(5));
+        holdService.confirm(first);
+        UUID second = holdService.hold(resourceId, "second", Duration.ofMinutes(5));
+
+        List<OutboxEvent> pending = outboxRepository.findByProcessedAtIsNullOrderByCreatedAtAscIdAsc();
+        assertThat(pending).extracting(OutboxEvent::getEventType)
+                .containsExactly("RESERVATION_HOLD_CREATED", "RESERVATION_CONFIRMED", "RESERVATION_HOLD_CREATED");
+        assertThat(pending).allSatisfy(event -> assertThat(event.getResourceId()).isEqualTo(resourceId));
+
+        Map<String, Object> consumerProps = KafkaTestUtils.consumerProps("order-" + UUID.randomUUID(), "false", embeddedKafkaBroker);
+        consumerProps.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
+        DefaultKafkaConsumerFactory<String, String> consumerFactory = new DefaultKafkaConsumerFactory<>(
+                consumerProps, new StringDeserializer(), new StringDeserializer());
+        try (Consumer<String, String> consumer = consumerFactory.createConsumer()) {
+            embeddedKafkaBroker.consumeFromAllEmbeddedTopics(consumer);
+            scheduler.publishOutboxEvents();
+
+            ConsumerRecords<String, String> records = KafkaTestUtils.getRecords(consumer, Duration.ofSeconds(10));
+            List<String> publishedTypes = new ArrayList<>();
+            for (ConsumerRecord<String, String> record : records) {
+                com.fasterxml.jackson.databind.JsonNode envelope = objectMapper.readTree(record.value());
+                String holdId = envelope.path("payload").path("holdId").asText();
+                if (first.toString().equals(holdId) || second.toString().equals(holdId)) {
+                    assertThat(record.key()).isEqualTo(resourceId.toString());
+                    publishedTypes.add(envelope.get("eventType").asText());
+                }
+            }
+            assertThat(publishedTypes).containsExactly(
+                    "RESERVATION_HOLD_CREATED", "RESERVATION_CONFIRMED", "RESERVATION_HOLD_CREATED");
+        }
     }
 }

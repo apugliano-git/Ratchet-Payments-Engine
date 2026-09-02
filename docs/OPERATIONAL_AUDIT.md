@@ -14,8 +14,8 @@
 | **notification-service**    | 8084        | 8084           | Java (mvn spring-boot:run) — era 8083, corregido |
 | **Postgres**                | 5432        | 5432           | Docker |
 | **Redis**                   | 6379        | 6379           | Docker |
-| **Kafka (OUTSIDE)**         | 9092        | 9092           | Docker (cp-kafka) |
-| **Zookeeper**               | 2181        | 2181           | Docker |
+| **Redpanda (OUTSIDE)**      | 9092        | 9092           | Docker |
+| **Redpanda (INTERNAL)**     | 29092       | 29092          | Docker network |
 
 ---
 
@@ -29,7 +29,7 @@
 - **Puerto:** `8082` ✅ Sin colisión
 - **PostgreSQL:** `jdbc:postgresql://localhost:5432/ratchet_db` ✅ **RESUELTO** — datasource agregado
 - **Redis:** `localhost:6379` ✅
-- **Kafka:** Sin config explícita (no publica ni consume directamente; usa Testcontainers en test) ✅
+- **Kafka API / Redpanda:** `KAFKA_BOOTSTRAP_SERVERS` con default `localhost:9092`; publica `reservation.events.v1` con key `resourceId`
 - **JWT JWK URI:** Hardcodeado a `http://localhost:8080/.well-known/jwks.json` ⚠️ **Deuda técnica v1** — requiere Cypher/Keycloak local en 8080 para arrancar correctamente
 
 ### `payment-service`
@@ -37,12 +37,13 @@
 - **PostgreSQL:** `jdbc:postgresql://localhost:5432/payment_db` ✅ **RESUELTO** — nombre unificado
 - **Credenciales:** `ratchet` / `ratchet_password` ✅ **RESUELTO** — unificadas
 - **MP_WEBHOOK_SECRET:** `${MP_WEBHOOK_SECRET:placeholder_secret}` ⚠️ **Deuda técnica v1** — inyectar antes de prod
+- **Reservation URL:** `RESERVATION_SERVICE_URL` con default `http://localhost:8082`
 
 ### `notification-service`
 - **Puerto:** `8084` ✅ **RESUELTO** — era 8083
 - **PostgreSQL:** `jdbc:postgresql://localhost:5432/notification_db` ✅
 - **Credenciales:** `ratchet` / `ratchet_password` ✅ **RESUELTO** — unificadas
-- **Kafka:** `localhost:9092` ✅
+- **Kafka API / Redpanda:** `KAFKA_BOOTSTRAP_SERVERS` con default `localhost:9092`; consume `reservation.events.v1` con group `notification-service-group`
 
 ---
 
@@ -51,10 +52,9 @@
 ### Estado de `infra/docker-compose.yml`
 - **Postgres 16** → puerto `5432` ✅
 - **Redis 7** → puerto `6379` ✅
-- **Kafka (`confluentinc/cp-kafka:7.5.0`)** → puerto `9092` ✅ **RESUELTO** — reemplazó a Redpanda (imagen no disponible localmente)
-- **Zookeeper** → puerto `2181` ✅
+- **Redpanda (`docker.redpanda.com/redpandadata/redpanda:v24.2.7`)** → `9092` externo y `29092` interno ✅
 
-> **Nota:** La imagen `redpanda/redpanda:latest` fue reemplazada por `confluentinc/cp-kafka:7.5.0`, que ya está cacheada localmente (usada por los tests de Testcontainers). El comportamiento de Kafka-compatible es equivalente para el uso del proyecto.
+> **Nota:** Redpanda expone la API compatible con Kafka. Ratchet v1.1 usa JSON textual y no depende de Avro ni Schema Registry.
 
 ### Inicialización de Bases de Datos
 - `infra/init-db/01-create-databases.sql` ✅ **RESUELTO** — crea `payment_db` y `notification_db` automáticamente al primer arranque del volumen de Postgres

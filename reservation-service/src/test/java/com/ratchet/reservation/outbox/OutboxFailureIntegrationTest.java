@@ -89,14 +89,12 @@ public class OutboxFailureIntegrationTest {
         holdService.confirm(holdId);
 
         List<OutboxEvent> events = outboxRepository.findByProcessedAtIsNull();
-        assertThat(events).hasSize(1);
-        OutboxEvent event = events.get(0);
+        assertThat(events).hasSize(2);
 
         // 2. Run scheduler manually. It should fail to send and not throw an unhandled exception
         scheduler.publishOutboxEvents();
 
         // 3. Verify event is still unprocessed
-        OutboxEvent unchangedEvent = outboxRepository.findById(event.getId()).orElseThrow();
-        assertThat(unchangedEvent.getProcessedAt()).isNull();
+        assertThat(outboxRepository.findByProcessedAtIsNull()).hasSize(2);
     }
 }

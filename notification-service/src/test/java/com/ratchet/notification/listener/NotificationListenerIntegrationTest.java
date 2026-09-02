@@ -66,14 +66,16 @@ public class NotificationListenerIntegrationTest {
         String payload = String.format("""
                 {
                   "eventId": "%s",
-                  "holdId": "%s",
+                  "eventType": "RESERVATION_CONFIRMED",
+                  "eventVersion": 1,
+                  "occurredAt": "2023-10-01T12:00:00Z",
                   "resourceId": "b3e0c031-1b91-4c6e-8260-1234567890ab",
                   "holderRef": "user-123",
-                  "confirmedAt": "2023-10-01T12:00:00Z"
+                  "payload": {"holdId": "%s"}
                 }
-                """, eventId, holdId);
+                """, eventId, holdId, holdId);
 
-        kafkaTemplate.send("reservation.hold.confirmed", holdId.toString(), payload);
+        kafkaTemplate.send("reservation.events.v1", holdId.toString(), payload);
 
         await().atMost(Duration.ofSeconds(10)).untilAsserted(() -> {
             List<NotificationLog> logs = repository.findAll();
@@ -91,16 +93,18 @@ public class NotificationListenerIntegrationTest {
         String payload = String.format("""
                 {
                   "eventId": "%s",
-                  "holdId": "%s",
+                  "eventType": "RESERVATION_CONFIRMED",
+                  "eventVersion": 1,
+                  "occurredAt": "2023-10-01T12:00:00Z",
                   "resourceId": "b3e0c031-1b91-4c6e-8260-1234567890ab",
                   "holderRef": "user-123",
-                  "confirmedAt": "2023-10-01T12:00:00Z"
+                  "payload": {"holdId": "%s"}
                 }
-                """, eventId, holdId);
+                """, eventId, holdId, holdId);
 
         // Send twice
-        kafkaTemplate.send("reservation.hold.confirmed", holdId.toString(), payload);
-        kafkaTemplate.send("reservation.hold.confirmed", holdId.toString(), payload);
+        kafkaTemplate.send("reservation.events.v1", holdId.toString(), payload);
+        kafkaTemplate.send("reservation.events.v1", holdId.toString(), payload);
 
         await().atMost(Duration.ofSeconds(10)).untilAsserted(() -> {
             assertThat(repository.count()).isEqualTo(1);
@@ -121,7 +125,7 @@ public class NotificationListenerIntegrationTest {
                 }
                 """;
 
-        kafkaTemplate.send("reservation.hold.confirmed", "a3e0c031-1b91-4c6e-8260-1234567890ab", payload);
+        kafkaTemplate.send("reservation.events.v1", "a3e0c031-1b91-4c6e-8260-1234567890ab", payload);
 
         // Wait to see if anything is saved
         Thread.sleep(3000);
@@ -134,15 +138,36 @@ public class NotificationListenerIntegrationTest {
         String payload = String.format("""
                 {
                   "eventId": "%s",
+                  "eventType": "RESERVATION_CONFIRMED",
                   "resourceId": "b3e0c031-1b91-4c6e-8260-1234567890ab",
-                  "confirmedAt": "2023-10-01T12:00:00Z"
+                  "holderRef": "user-123"
                 }
                 """, eventId);
 
-        kafkaTemplate.send("reservation.hold.confirmed", "a3e0c031-1b91-4c6e-8260-1234567890ab", payload);
+        kafkaTemplate.send("reservation.events.v1", "a3e0c031-1b91-4c6e-8260-1234567890ab", payload);
 
         // Wait to see if anything is saved
         Thread.sleep(3000);
         assertThat(repository.count()).isEqualTo(0);
+    }
+
+    @Test
+    void shouldIgnoreNonConfirmedEventTypes() throws Exception {
+        String payload = """
+                {
+                  "eventId": "%s",
+                  "eventType": "RESERVATION_HOLD_CREATED",
+                  "eventVersion": 1,
+                  "occurredAt": "2023-10-01T12:00:00Z",
+                  "resourceId": "b3e0c031-1b91-4c6e-8260-1234567890ab",
+                  "holderRef": "user-123",
+                  "payload": {"holdId": "%s", "expiresAt": "2023-10-01T12:05:00Z"}
+                }
+                """.formatted(UUID.randomUUID(), UUID.randomUUID());
+
+        kafkaTemplate.send("reservation.events.v1", "b3e0c031-1b91-4c6e-8260-1234567890ab", payload).get();
+        Thread.sleep(1000);
+
+        assertThat(repository.count()).isZero();
     }
 }

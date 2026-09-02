@@ -12,7 +12,7 @@ El ecosistema está compuesto por 4 microservicios independientes:
 4. **notification-service**: Consumidor final idempotente que reacciona a los pagos confirmados.
 
 **Flujo End-to-End:**
-`Cypher Auth (Login)` ➔ `POST /holds (Reservation)` ➔ `Mercado Pago Sandbox` ➔ `Webhook (Payment)` ➔ `POST /internal/holds/confirm` ➔ `Outbox DB` ➔ `Redpanda` ➔ `Notification Service`
+`Cypher Auth (Login)` ➔ `POST /holds (Reservation)` ➔ `Mercado Pago Sandbox` ➔ `Webhook (Payment)` ➔ `POST /internal/holds/confirm` ➔ `Outbox DB` ➔ `Redpanda: reservation.events.v1` ➔ `Notification Service`
 
 > **Nota sobre Endpoints Internos:** Los endpoints bajo el prefijo `/internal/**` (como `/internal/holds/{id}/confirm` para la consolidación asíncrona de pagos y `/internal/resources` como herramienta de inyección para testing) son de estricto uso interno entre microservicios o para automatización local. No forman parte de la API pública consumida por los clientes finales o el frontend.
 
@@ -31,6 +31,24 @@ El ecosistema está compuesto por 4 microservicios independientes:
 * **Idempotencia de dos niveles:** Constraint `UNIQUE` en BD para deduplicar notificaciones repetidas de Mercado Pago, y validación por `eventId` en el consumidor Kafka para prevenir mensajes duplicados de red.
 * **Reconciliación Resiliente:** Separación estricta entre errores transitorios (ej. timeout de BD, reintentables vía scheduler) y permanentes (ej. reserva inexistente, descartados inmediatamente).
 
+## Contrato de eventos v1.1
+
+Ratchet publica JSON en `reservation.events.v1` con `resourceId` como Kafka message key y entrega at-least-once. Los consumidores deben deduplicar globalmente por `eventId`.
+
+```json
+{
+  "eventId": "uuid",
+  "eventType": "RESERVATION_HOLD_CREATED",
+  "eventVersion": 1,
+  "occurredAt": "ISO-8601 UTC",
+  "resourceId": "uuid",
+  "holderRef": "string",
+  "payload": {}
+}
+```
+
+Los tipos publicados son `RESERVATION_HOLD_CREATED`, `RESERVATION_CONFIRMED`, `RESERVATION_RELEASED`, `RESERVATION_EXPIRED` y `RESERVATION_REJECTED`. El último representa exclusivamente un rechazo por `availableUnits <= 0` y no contiene `holdId`.
+
 ## Cómo Levantarlo
 
 **Requisitos:** Docker, Docker Compose, JDK 21, Maven.
@@ -40,7 +58,7 @@ El ecosistema está compuesto por 4 microservicios independientes:
    cd infra
    docker compose up -d
    ```
-   *(Nota: Levanta Redpanda en host ports 18081/18082/29092, Redis en 6379, y PostgreSQL en 5432 auto-creando las bases `ratchet_db`, `payment_db`, y `notification_db` con credenciales `ratchet/ratchet_password`).*
+   *(Nota: Levanta Redpanda en `localhost:9092` para clientes del host y `redpanda:29092` dentro de Docker, Redis en 6379, y PostgreSQL en 5432 auto-creando las bases `ratchet_db`, `payment_db`, y `notification_db`.)*
 
 2. **Compilar el proyecto:**
    ```bash
@@ -69,5 +87,5 @@ Auditado con escenarios progresivos utilizando **k6** (ver carpeta `/load-tests`
 ## Fuera de Alcance de V1
 - **Circuit Breakers:** No implementados para llamadas síncronas entre microservicios.
 - **Seguridad inter-servicio (Deuda de Seguridad):** Los endpoints en `/internal/**` (incluyendo `InternalResourceController` y la consolidación de reservas) carecen de validación criptográfica y confían temporalmente en el aislamiento de la red Docker. Requieren mTLS o Auth Tokens antes de pasar a producción.
-- **Backoff Outbox:** El *publisher* de eventos reintentará publicarlos indefinidamente sin tope límite si Kafka cae de forma prolongada.
+- **Entrega Outbox:** El publisher reintenta pendientes indefinidamente si Redpanda cae; la entrega es at-least-once y los consumidores deben deduplicar por `eventId`.
 - **Módulo de Detección de Fraude:** Ausente en esta versión, dependiente en su totalidad del proveedor de pagos.

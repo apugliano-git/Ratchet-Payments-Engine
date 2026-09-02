@@ -6,6 +6,7 @@ import com.ratchet.reservation.domain.Hold;
 import com.ratchet.reservation.domain.HoldStatus;
 import com.ratchet.reservation.domain.Resource;
 import com.ratchet.reservation.repository.HoldRepository;
+import com.ratchet.reservation.repository.OutboxRepository;
 import com.ratchet.reservation.repository.ResourceRepository;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -64,6 +65,9 @@ class HoldControllerSecurityTest {
     private HoldRepository holdRepository;
 
     @Autowired
+    private OutboxRepository outboxRepository;
+
+    @Autowired
     private ObjectMapper objectMapper;
 
     @org.springframework.boot.test.mock.mockito.MockBean
@@ -74,6 +78,7 @@ class HoldControllerSecurityTest {
     @BeforeEach
     void setUp() {
         holdRepository.deleteAll();
+        outboxRepository.deleteAll();
         resourceRepository.deleteAll();
         
         Resource resource = new Resource();
@@ -86,6 +91,7 @@ class HoldControllerSecurityTest {
     @AfterEach
     void tearDown() {
         holdRepository.deleteAll();
+        outboxRepository.deleteAll();
         resourceRepository.deleteAll();
     }
 
@@ -171,5 +177,29 @@ class HoldControllerSecurityTest {
         // Hold should be RELEASED
         Hold hold = holdRepository.findById(holdId).orElseThrow();
         assertThat(hold.getStatus()).isEqualTo(HoldStatus.RELEASED);
+    }
+
+    @Test
+    void testUnavailableResourceReturns409WithoutCreatingHoldOrChangingCapacity() throws Exception {
+        Resource resource = resourceRepository.findById(resourceId).orElseThrow();
+        resource.setAvailableUnits(0);
+        resourceRepository.save(resource);
+
+        HoldRequest request = new HoldRequest(resourceId, 15);
+        mockMvc.perform(post("/holds")
+                .with(jwt().jwt(jwt -> jwt.subject("user-A")))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isConflict());
+
+        assertThat(holdRepository.findAll()).isEmpty();
+        assertThat(resourceRepository.findById(resourceId).orElseThrow().getAvailableUnits()).isZero();
+        com.ratchet.reservation.domain.OutboxEvent event = outboxRepository.findAll().stream().findFirst().orElseThrow();
+        com.fasterxml.jackson.databind.JsonNode envelope = objectMapper.readTree(event.getPayload());
+        assertThat(event.getEventType()).isEqualTo("RESERVATION_REJECTED");
+        assertThat(envelope.get("payload").get("reason").asText()).isEqualTo("INSUFFICIENT_AVAILABILITY");
+        assertThat(envelope.get("payload").get("requestedUnits").asInt()).isEqualTo(1);
+        assertThat(envelope.get("payload").get("availableUnits").asInt()).isZero();
+        assertThat(envelope.get("payload").has("holdId")).isFalse();
     }
 }

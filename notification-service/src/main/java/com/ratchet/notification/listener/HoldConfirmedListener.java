@@ -26,8 +26,8 @@ public class HoldConfirmedListener {
         this.repository = repository;
     }
 
-    @KafkaListener(topics = "reservation.hold.confirmed", groupId = "${spring.kafka.consumer.group-id}")
-    public void onHoldConfirmed(String payload) {
+    @KafkaListener(topics = "reservation.events.v1", groupId = "${spring.kafka.consumer.group-id}")
+    public void onReservationEvent(String payload) {
         JsonNode root;
         try {
             root = objectMapper.readTree(payload);
@@ -36,12 +36,19 @@ public class HoldConfirmedListener {
             return;
         }
         
+        String eventType = root.path("eventType").asText();
+        if (!"RESERVATION_CONFIRMED".equals(eventType)) {
+            log.debug("Ignoring reservation event type: {}", eventType);
+            return;
+        }
+
         if (!root.has("eventId") || root.get("eventId").isNull()) {
             log.error("Malformed message received: missing eventId. Payload: {}", payload);
             return;
         }
         
-        if (!root.has("holdId") || root.get("holdId").isNull() || 
+        JsonNode eventPayload = root.get("payload");
+        if (eventPayload == null || !eventPayload.has("holdId") || eventPayload.get("holdId").isNull() ||
             !root.has("holderRef") || root.get("holderRef").isNull()) {
             log.error("Malformed message received: missing holdId or holderRef. Payload: {}", payload);
             return;
@@ -50,7 +57,7 @@ public class HoldConfirmedListener {
         String eventId = root.get("eventId").asText();
         UUID holdId;
         try {
-            holdId = UUID.fromString(root.get("holdId").asText());
+            holdId = UUID.fromString(eventPayload.get("holdId").asText());
         } catch (IllegalArgumentException e) {
             log.error("Malformed message received: invalid holdId UUID. Payload: {}", payload, e);
             return;
@@ -78,7 +85,7 @@ public class HoldConfirmedListener {
             
         } catch (Exception e) {
             log.error("Database or infrastructure error processing message, will be retried. Payload: {}", payload, e);
-            throw new RuntimeException("Error processing HoldConfirmed message", e);
+            throw new RuntimeException("Error processing reservation event", e);
         }
     }
 }

@@ -13,6 +13,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.UUID;
 import org.springframework.retry.annotation.Backoff;
 import org.springframework.retry.annotation.Retryable;
@@ -38,13 +40,18 @@ public class HoldService {
         this.objectMapper = objectMapper;
     }
 
-    @Transactional
+    @Transactional(noRollbackFor = InsufficientAvailabilityException.class)
     @Retryable(retryFor = org.springframework.orm.ObjectOptimisticLockingFailureException.class, maxAttempts = 3, backoff = @Backoff(delay = 50))
     public UUID hold(UUID resourceId, String holderRef, Duration ttl) {
         Resource resource = resourceRepository.findById(resourceId)
                 .orElseThrow(() -> new IllegalArgumentException("Resource not found"));
 
         if (resource.getAvailableUnits() <= 0) {
+            Instant occurredAt = Instant.now();
+            saveOutboxEvent("Resource", resourceId, resourceId, holderRef, "RESERVATION_REJECTED", Map.of(
+                    "reason", "INSUFFICIENT_AVAILABILITY",
+                    "requestedUnits", 1,
+                    "availableUnits", resource.getAvailableUnits()), occurredAt);
             throw new InsufficientAvailabilityException("No units available for resource: " + resourceId);
         }
 
@@ -60,6 +67,10 @@ public class HoldService {
         hold.setCreatedAt(now);
         hold.setExpiresAt(now.plus(ttl));
         holdRepository.save(hold);
+
+        saveOutboxEvent("Hold", hold.getId(), resourceId, holderRef, "RESERVATION_HOLD_CREATED", Map.of(
+                "holdId", hold.getId(),
+                "expiresAt", hold.getExpiresAt().toString()), now);
 
         try {
             redisTemplate.opsForValue().set("hold:" + hold.getId(), resourceId.toString(), ttl);
@@ -83,6 +94,8 @@ public class HoldService {
         holdRepository.save(hold);
         
         incrementResourceUnits(hold.getResourceId());
+        saveOutboxEvent("Hold", hold.getId(), hold.getResourceId(), hold.getHolderRef(), "RESERVATION_RELEASED", Map.of(
+                "holdId", hold.getId()), Instant.now());
     }
 
     @Transactional
@@ -93,32 +106,11 @@ public class HoldService {
             throw new InvalidHoldStateException("Cannot confirm hold in state: " + hold.getStatus());
         }
         
-        OutboxEvent outboxEvent = new OutboxEvent();
-        outboxEvent.setId(UUID.randomUUID());
-        outboxEvent.setAggregateType("Hold");
-        outboxEvent.setAggregateId(holdId);
-        outboxEvent.setEventType("HoldConfirmed");
-        
-        java.util.Map<String, Object> payloadMap = new java.util.HashMap<>();
-        payloadMap.put("eventId", outboxEvent.getId());
-        payloadMap.put("holdId", hold.getId());
-        payloadMap.put("resourceId", hold.getResourceId());
-        payloadMap.put("holderRef", hold.getHolderRef());
-        payloadMap.put("confirmedAt", Instant.now().toString());
-        
-        try {
-            outboxEvent.setPayload(objectMapper.writeValueAsString(payloadMap));
-        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
-            throw new RuntimeException("Failed to serialize HoldConfirmed event payload", e);
-        }
-        
-        outboxEvent.setCreatedAt(Instant.now());
-        outboxEvent.setProcessedAt(null);
-        
+        Instant occurredAt = Instant.now();
         hold.setStatus(HoldStatus.CONFIRMED);
         holdRepository.save(hold);
-        
-        outboxRepository.save(outboxEvent);
+        saveOutboxEvent("Hold", hold.getId(), hold.getResourceId(), hold.getHolderRef(), "RESERVATION_CONFIRMED", Map.of(
+                "holdId", hold.getId()), occurredAt);
     }
 
     @Transactional
@@ -134,6 +126,9 @@ public class HoldService {
         holdRepository.save(hold);
         
         incrementResourceUnits(hold.getResourceId());
+        saveOutboxEvent("Hold", hold.getId(), hold.getResourceId(), hold.getHolderRef(), "RESERVATION_EXPIRED", Map.of(
+                "holdId", hold.getId(),
+                "scheduledExpiresAt", hold.getExpiresAt().toString()), Instant.now());
     }
     
     private Hold getHoldOrThrow(UUID holdId) {
@@ -146,5 +141,34 @@ public class HoldService {
                 .orElseThrow(() -> new IllegalArgumentException("Resource not found"));
         resource.setAvailableUnits(resource.getAvailableUnits() + 1);
         resourceRepository.save(resource);
+    }
+
+    private void saveOutboxEvent(String aggregateType, UUID aggregateId, UUID resourceId, String holderRef,
+                                 String eventType, Map<String, Object> eventPayload, Instant occurredAt) {
+        OutboxEvent event = new OutboxEvent();
+        event.setId(UUID.randomUUID());
+        event.setAggregateType(aggregateType);
+        event.setAggregateId(aggregateId);
+        event.setResourceId(resourceId);
+        event.setEventType(eventType);
+        event.setCreatedAt(occurredAt);
+        event.setProcessedAt(null);
+
+        Map<String, Object> envelope = new LinkedHashMap<>();
+        envelope.put("eventId", event.getId());
+        envelope.put("eventType", eventType);
+        envelope.put("eventVersion", 1);
+        envelope.put("occurredAt", occurredAt.toString());
+        envelope.put("resourceId", resourceId);
+        envelope.put("holderRef", holderRef);
+        envelope.put("payload", eventPayload);
+
+        try {
+            event.setPayload(objectMapper.writeValueAsString(envelope));
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            throw new RuntimeException("Failed to serialize " + eventType + " event payload", e);
+        }
+
+        outboxRepository.save(event);
     }
 }
